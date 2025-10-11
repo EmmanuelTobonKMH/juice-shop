@@ -1,18 +1,67 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
+# first pipeline
 
+# azure-pipelines.yml (ejemplo Node.js)
 trigger:
-- master
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - '*'         # ejecuta CI para PRs (validación)
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: 'ubuntu-latest'
 
-steps:
-- task: NexPloitRerunScan@3
-  inputs:
-    apiToken: '$(APITOKENBRIGHT)'
-    hostname: 'app.brightsec.com'
-    scanId: 'nCYyuryJXeVYbVLcegdNAu'
-    name: 'Azure DevOps Pipeline Scan'
+variables:
+  nodeVersion: '18.x'
+  webAppName: '$(webAppName)'        # define en Library o pipeline variables
+  azureSubscription: 'MiAzureSub'    # nombre del Service Connection
+
+stages:
+- stage: Build
+  displayName: Build & Test
+  jobs:
+  - job: build
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '$(nodeVersion)'
+      displayName: 'Use Node.js'
+
+    - script: npm ci
+      displayName: 'npm ci'
+
+    - script: npm test
+      displayName: 'Run tests'
+
+    - script: npm run build
+      displayName: 'Build'
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/dist'
+        ArtifactName: 'drop'
+      displayName: 'Publish artifact'
+
+- stage: Deploy
+  displayName: Deploy to Azure (main only)
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: deployWeb
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appName: '$(webAppName)'
+              package: '$(Pipeline.Workspace)/drop/**/*.zip'
+            displayName: 'Deploy to Azure Web App'
