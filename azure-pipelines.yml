@@ -1,5 +1,4 @@
 # first pipeline
-
 # azure-pipelines.yml (ejemplo Node.js)
 trigger:
   branches:
@@ -45,23 +44,37 @@ stages:
         ArtifactName: 'drop'
       displayName: 'Publish artifact'
 
-- stage: Deploy
-  displayName: Deploy to Azure (main only)
-  dependsOn: Build
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-  jobs:
-  - deployment: deployWeb
-    environment: 'production'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - download: current
-            artifact: drop
+    - task: Checkmarx AST@3
+      inputs:
+        CheckmarxService: 'juiceshop-connection'
+        projectName: '$(Build.Repository.Name)'
+        branchName: '$(Build.SourceBranchName)'
+        tenantName: 'nfr_lugapel-ast'
 
-          - task: AzureWebApp@1
-            inputs:
-              azureSubscription: '$(azureSubscription)'
-              appName: '$(webAppName)'
-              package: '$(Pipeline.Workspace)/drop/**/*.zip'
-            displayName: 'Deploy to Azure Web App'
+
+
+
+
+
+
+
+#- stage: Deploy
+#  displayName: Deploy to Azure (main only)
+#  dependsOn: Build
+#  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+#  jobs:
+#  - deployment: deployWeb
+#    environment: 'production'
+#    strategy:
+#      runOnce:
+#        deploy:
+#          steps:
+#          - download: current
+#            artifact: drop
+
+#         - task: AzureWebApp@1
+#            inputs:
+#              azureSubscription: '$(azureSubscription)'
+#              appName: '$(webAppName)'
+#              package: '$(Pipeline.Workspace)/drop/**/*.zip'
+#            displayName: 'Deploy to Azure Web App'
