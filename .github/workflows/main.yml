@@ -1,34 +1,29 @@
-name: Checkmarx One Escanear
+name: Checkmarx One Scan
 
 on:
   push:
     branches:
-      - principal
-      - maestro
-      - desarrollo
-  pull_request:
-    branches:
-      - principal
-      - maestro
-      - desarrollo
+      - main
+      - master
+      - dev
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkmarx-One-Scan
-        uses: checkmarx/ast-github-action@main
+      - name: Checkmarx AST Github Action
+        uses: Checkmarx/ast-github-action@2.0.23
         with:
-          project_name: 'juice-shop'  # Solo el nombre, NO repo/user
-          cx_tenant: 'nfr_lugapel-ast'
           base_uri: 'https://ast.checkmarx.net'
+          cx_tenant: 'nfr_lugapel-ast'
           cx_client_id: ${{ secrets.CX_CLIENT_ID }}
           cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
-
-
-
-
-      
+          project_name: 'EmmanuelTobonKMH/juice-shop'
+          branch: ${{ github.ref_name }}
+          additional_params: '--report-format sarif --output-path .'
+  
+          
