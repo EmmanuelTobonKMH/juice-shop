@@ -3,14 +3,14 @@ name: Checkmarx One Escanear
 on:
   push:
     branches:
-      - main
-      - master
-      - develop
+      - principal
+      - maestro
+      - desarrollo
   pull_request:
     branches:
-      - main
-      - master
-      - develop
+      - principal
+      - maestro
+      - desarrollo
 
 jobs:
   build:
@@ -22,11 +22,13 @@ jobs:
       - name: Checkmarx-One-Scan
         uses: checkmarx/ast-github-action@main
         with:
-          project-name: 'EmmanuelTobonKMH/juice-shop'
-          cx-tenant: 'nfr_lugapel-ast'
-          base-uri: 'https://ast.checkmarx.net/'
-          cx-client-id: ${{ secrets.CX_CLIENT_ID }}
-          cx-client-secret: ${{ secrets.CX_CLIENT_SECRET }}
+          project_name: 'EmmanuelTobonKMH/juice-shop'
+          cx_tenant: 'nfr_lugapel-ast'
+          base_uri: 'https://ast.checkmarx.net/'
+          cx_client_id: ${{ secrets.CX_CLIENT_ID }}
+          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
+          branch: ${{ github.ref_name }}
+
 
 
       
