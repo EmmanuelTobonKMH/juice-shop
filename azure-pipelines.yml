@@ -50,7 +50,6 @@ stages:
         projectName: '$(Build.Repository.Name)'
         branchName: '$(Build.SourceBranchName)'
         tenantName: 'nfr_lugapel-ast'
-        additionalParams: '--async'
 
 #    - script: |
 #        echo "=== Iniciando análisis de dependencias con npm audit ==="
