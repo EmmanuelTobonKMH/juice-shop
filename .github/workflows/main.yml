@@ -14,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Checkmarx AST Github Action
-        uses: Checkmarx/ast-github-action@2.3.33   # <-- cambia esto
+        uses: Checkmarx/ast-github-action@c52fa63dbd4916520882e10456d66ff4dd7bf754
         with:
           base_uri: 'https://ast.checkmarx.net'
           cx_tenant: 'nfr_lugapel-ast'
