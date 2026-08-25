@@ -2,103 +2,105 @@ trigger:
   branches:
     include:
       - main
-
-pr:
-  branches:
-    include:
-      - main
+      - dev
 
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: "ubuntu-latest"
 
 variables:
-  nodeVersion: '18.x'
+  checkmarxServiceConnection: "juiceshop-connection"
+  checkmarxTenant: "REPLACE_WITH_YOUR_CHECKMARX_TENANT"
+  mavenSettingsFile: "$(Build.SourcesDirectory)/settings.xml"
+  mavenGoals: "test"
+  enableMavenCache: "true"
 
 stages:
-- stage: BuildAndScan
-  displayName: Build, Test & Scan
-  jobs:
-  - job: build
-    displayName: Build and Scan Code
-    steps:
-    - task: NodeTool@0
-      inputs:
-        versionSpec: '$(nodeVersion)'
-      displayName: 'Use Node.js'
+  - stage: BuildAndSecurityScan
+    displayName: "MuleSoft - Build y Checkmarx"
+    jobs:
+      - job: MuleBuildAndScan
+        displayName: "Maven + Checkmarx SAST/SCA"
+        steps:
 
-    - script: npm i
-      displayName: 'Install dependencies'
+          - checkout: self
+            fetchDepth: 0
+            persistCredentials: true
 
-    - script: |
-        echo "Creando package-lock.json..."
-        npm install --package-lock-only
-      displayName: 'Generate package-lock.json'
+          - bash: |
+              set -euo pipefail
+              echo "===== Java ====="
+              java -version
+              echo "===== Maven ====="
+              mvn -version
+            displayName: "Validar Java y Maven"
 
-    - script: npm install -g @angular/cli
-      displayName: 'Install Angular CLI'
+          - task: Cache@2
+            condition: eq(variables['enableMavenCache'], 'true')
+            displayName: "Cache Maven (.m2)"
+            inputs:
+              key: 'maven | "$(Agent.OS)" | pom.xml'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+              path: "$(HOME)/.m2/repository"
 
-    - script: |
-        npm test || echo "Tests failed — continuing pipeline"
-      displayName: 'Run unit tests (ignore failures)'
+          # Si existe settings.xml en el repositorio, se copia a ~/.m2.
+          # No se imprime su contenido para evitar exponer credenciales.
+          - bash: |
+              set -euo pipefail
+              mkdir -p "$(HOME)/.m2"
 
-    - script: echo "Skipping build — no build script defined"
-      displayName: 'Build project (skipped)'
+              if [ -f "$(mavenSettingsFile)" ]; then
+                cp "$(mavenSettingsFile)" "$(HOME)/.m2/settings.xml"
+                chmod 600 "$(HOME)/.m2/settings.xml"
+                echo "settings.xml configurado en ~/.m2"
+              else
+                echo "No se encontró settings.xml; se utilizará la configuración Maven por defecto."
+              fi
+            displayName: "Preparar configuración Maven"
 
-    - task: Checkmarx AST@3
-      inputs:
-        CheckmarxService: 'juiceshop-connection'
-        projectName: '$(Build.Repository.Name)'
-        branchName: '$(Build.SourceBranchName)'
-        tenantName: 'nfr_lugapel-ast'
+          # Validamos primero que Maven pueda resolver el pom.xml y sus dependencias.
+          - bash: |
+              set -euo pipefail
 
-#    - script: |
-#        echo "=== Iniciando análisis de dependencias con npm audit ==="
-#        echo "Instalando dependencias..."
-#        npm install
-#
-#        echo "Ejecutando npm audit con reporte JSON..."
-#        npm audit --json > $(Build.SourcesDirectory)/sca-report.json || true
-#
-#        echo "Analizando severidades detectadas..."
-#        HIGH=$(cat $(Build.SourcesDirectory)/sca-report.json | jq '.metadata.vulnerabilities.high')
-#        CRITICAL=$(cat $(Build.SourcesDirectory)/sca-report.json | jq '.metadata.vulnerabilities.critical')
-#
-#        echo "Vulnerabilidades detectadas:"
-#        echo "  High: $HIGH"
-#        echo "  Critical: $CRITICAL"
-#
-#        if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
-#          echo "❌ Se detectaron vulnerabilidades severas. Falla de seguridad."
-#          exit 1
-#        else
-#          echo "✅ No se detectaron vulnerabilidades severas. Continuando..."
-#        fi
-#      displayName: 'Security Gate - Validar vulnerabilidades con npm audit'
+              if [ -f "$(HOME)/.m2/settings.xml" ]; then
+                mvn -B -U -s "$(HOME)/.m2/settings.xml"                   -DskipTests                   dependency:tree
+              else
+                mvn -B -U                   -DskipTests                   dependency:tree
+              fi
+            displayName: "Validar dependencias Maven"
 
+          # Checkmarx One: SAST + SCA.
+          # El plugin de Azure DevOps puede descargar/usar SCA Resolver
+          # automáticamente cuando no se proporciona una ruta explícita.
+          # Esto evita depender de una ruta fija del agente.
+          - task: Checkmarx AST@3
+            displayName: "Checkmarx One - SAST + SCA"
+            inputs:
+              CheckmarxService: "$(checkmarxServiceConnection)"
+              projectName: "$(Build.Repository.Name)"
+              branchName: "$(Build.SourceBranchName)"
+              tenantName: "$(checkmarxTenant)"
+              additionalParams: >-
+                --scan-types sast,sca
+            continueOnError: false
 
-#    - task: PublishPipelineArtifact@1
-#      condition: always()
-#      inputs:
-#        targetPath: '$(Build.SourcesDirectory)/sca-report.json'
-#        artifact: 'sca-scan'
-#      displayName: 'Publish SCA Report'
+          # Build/pruebas del proyecto MuleSoft.
+          - bash: |
+              set -euo pipefail
 
-# - stage: Deploy
-#   displayName: Deploy to Azure (main only)
-#   dependsOn: BuildAndScan
-#   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-#   jobs:
-#   - deployment: deployWeb
-#     environment: 'production'
-#     strategy:
-#       runOnce:
-#         deploy:
-#           steps:
-#           - download: current
-#             artifact: drop
-#           - task: AzureWebApp@1
-#             inputs:
-#               azureSubscription: '$(azureSubscription)'
-#               appName: '$(webAppName)'
-#               package: '$(Pipeline.Workspace)/drop/**/*.zip'
-#             displayName: 'Deploy to Azure Web App'
+              if [ -f "$(HOME)/.m2/settings.xml" ]; then
+                mvn -B -U -s "$(HOME)/.m2/settings.xml" $(mavenGoals)
+              else
+                mvn -B -U $(mavenGoals)
+              fi
+            displayName: "Maven - Build y pruebas"
+
+          - bash: |
+              echo "=============================================="
+              echo "POC MuleSoft + Maven + Checkmarx completada"
+              echo "Proyecto : $(Build.Repository.Name)"
+              echo "Branch   : $(Build.SourceBranchName)"
+              echo "Tenant   : $(checkmarxTenant)"
+              echo "Scanners : SAST + SCA"
+              echo "=============================================="
+            displayName: "Resumen de la POC"
