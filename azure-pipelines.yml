@@ -39,7 +39,7 @@ stages:
             condition: eq(variables['enableMavenCache'], 'true')
             displayName: "Cache Maven (.m2)"
             inputs:
-              key: 'maven | "$(Agent.OS)" | pom.xml'
+              key: 'maven | "$(Agent.OS)" | **/pom.xml'
               restoreKeys: |
                 maven | "$(Agent.OS)"
               path: "$(HOME)/.m2/repository"
