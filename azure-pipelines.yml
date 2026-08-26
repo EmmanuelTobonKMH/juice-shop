@@ -10,7 +10,7 @@ pool:
 
 variables:
   checkmarxServiceConnection: "juiceshop-connection"
-  checkmarxTenant: "seguros-suramericana"
+  checkmarxTenant: "nfr_lugapel-ast"
   mavenSettingsFile: "$(Build.SourcesDirectory)/settings.xml"
   mavenGoals: "test"
   enableMavenCache: "true"
