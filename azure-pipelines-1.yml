@@ -1,28 +1,107 @@
-# Node.js
-# Build a general Node.js project with npm.
-# Add steps that analyze code, save build artifacts, deploy, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
-
 trigger:
-- main
+  branches:
+    include:
+      - main
+      - dev
+      - azure-boards
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: "ubuntu-latest"
 
-steps:
-- task: NodeTool@0
-  inputs:
-    versionSpec: '20.x'
-  displayName: 'Install Node.js'
+variables:
+  checkmarxServiceConnection: "juiceshop-connection"
+  checkmarxTenant: "nfr_lugapel-ast"
+  mavenSettingsFile: "$(Build.SourcesDirectory)/settings.xml"
+  mavenGoals: "test"
+  enableMavenCache: "true"
 
-- script: |
-    npm install
-    npm run build
-  displayName: 'npm install and build'
+stages:
+  - stage: BuildAndSecurityScan
+    displayName: "MuleSoft - Build y Checkmarx"
+    jobs:
+      - job: MuleBuildAndScan
+        displayName: "Maven + Checkmarx SAST/SCA"
+        steps:
 
-- task: Checkmarx AST@3
-  inputs:
-    CheckmarxService: 'clientid-connection'
-    projectName: '$(Build.Repository.Name)'
-    branchName: '$(Build.SourceBranchName)'
-    tenantName: 'nfr_lugapel-ast'
+          - checkout: self
+            fetchDepth: 0
+            persistCredentials: true
+
+          - bash: |
+              set -euo pipefail
+              echo "===== Java ====="
+              java -version
+              echo "===== Maven ====="
+              mvn -version
+            displayName: "Validar Java y Maven"
+
+          - task: Cache@2
+            condition: eq(variables['enableMavenCache'], 'true')
+            displayName: "Cache Maven (.m2)"
+            inputs:
+              key: 'maven | "$(Agent.OS)" | "$(Build.SourceBranchName)"'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+              path: "$(HOME)/.m2/repository"
+
+          # Si existe settings.xml en el repositorio, se copia a ~/.m2.
+          # No se imprime su contenido para evitar exponer credenciales.
+          - bash: |
+              set -euo pipefail
+              mkdir -p "$(HOME)/.m2"
+
+              if [ -f "$(mavenSettingsFile)" ]; then
+                cp "$(mavenSettingsFile)" "$(HOME)/.m2/settings.xml"
+                chmod 600 "$(HOME)/.m2/settings.xml"
+                echo "settings.xml configurado en ~/.m2"
+              else
+                echo "No se encontró settings.xml; se utilizará la configuración Maven por defecto."
+              fi
+            displayName: "Preparar configuración Maven"
+
+          # Validamos primero que Maven pueda resolver el pom.xml y sus dependencias.
+          - bash: |
+              set -euo pipefail
+
+              if [ -f "$(HOME)/.m2/settings.xml" ]; then
+                mvn -B -U -s "$(HOME)/.m2/settings.xml"                   -DskipTests                   dependency:tree
+              else
+                mvn -B -U                   -DskipTests                   dependency:tree
+              fi
+            displayName: "Validar dependencias Maven"
+
+          # Checkmarx One: SAST + SCA.
+          # El plugin de Azure DevOps puede descargar/usar SCA Resolver
+          # automáticamente cuando no se proporciona una ruta explícita.
+          # Esto evita depender de una ruta fija del agente.
+          - task: Checkmarx AST@3
+            displayName: "Checkmarx One - SAST + SCA"
+            inputs:
+              CheckmarxService: "$(checkmarxServiceConnection)"
+              projectName: "$(Build.Repository.Name)"
+              branchName: "$(Build.SourceBranchName)"
+              tenantName: "$(checkmarxTenant)"
+              additionalParams: >-
+                --scan-types sast,sca
+            continueOnError: false
+
+          # Build/pruebas del proyecto MuleSoft.
+          - bash: |
+              set -euo pipefail
+
+              if [ -f "$(HOME)/.m2/settings.xml" ]; then
+                mvn -B -U -s "$(HOME)/.m2/settings.xml" $(mavenGoals)
+              else
+                mvn -B -U $(mavenGoals)
+              fi
+            displayName: "Maven - Build y pruebas"
+
+          - bash: |
+              echo "=============================================="
+              echo "POC MuleSoft + Maven + Checkmarx completada"
+              echo "Proyecto : $(Build.Repository.Name)"
+              echo "Branch   : $(Build.SourceBranchName)"
+              echo "Tenant   : $(checkmarxTenant)"
+              echo "Scanners : SAST + SCA"
+              echo "=============================================="
+            displayName: "Resumen de la POC"
