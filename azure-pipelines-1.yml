@@ -15,12 +15,20 @@ variables:
   mavenGoals: "test"
   enableMavenCache: "true"
 
+  # Umbrales de calidad — compartidos por ambas fases
+  thresholdCritical: "0"
+  thresholdHigh: "5"
+  thresholdMedium: "10"
+
+# ─────────────────────────────────────────────────────────────
+# STAGE 1 — Preparación: Java, Maven, caché y settings.xml
+# ─────────────────────────────────────────────────────────────
 stages:
-  - stage: BuildAndSecurityScan
-    displayName: "MuleSoft - Build y Checkmarx"
+  - stage: Prepare
+    displayName: "Preparación del entorno"
     jobs:
-      - job: MuleBuildAndScan
-        displayName: "Maven + Checkmarx SAST/SCA"
+      - job: SetupAndValidate
+        displayName: "Java · Maven · Caché · Dependencias"
         steps:
 
           - checkout: self
@@ -44,38 +52,49 @@ stages:
                 maven | "$(Agent.OS)"
               path: "$(HOME)/.m2/repository"
 
-          # Si existe settings.xml en el repositorio, se copia a ~/.m2.
-          # No se imprime su contenido para evitar exponer credenciales.
           - bash: |
               set -euo pipefail
               mkdir -p "$(HOME)/.m2"
-
               if [ -f "$(mavenSettingsFile)" ]; then
                 cp "$(mavenSettingsFile)" "$(HOME)/.m2/settings.xml"
                 chmod 600 "$(HOME)/.m2/settings.xml"
                 echo "settings.xml configurado en ~/.m2"
               else
-                echo "No se encontró settings.xml; se utilizará la configuración Maven por defecto."
+                echo "No se encontró settings.xml; se usará configuración Maven por defecto."
               fi
             displayName: "Preparar configuración Maven"
 
-          # Validamos primero que Maven pueda resolver el pom.xml y sus dependencias.
           - bash: |
               set -euo pipefail
-
               if [ -f "$(HOME)/.m2/settings.xml" ]; then
-                mvn -B -U -s "$(HOME)/.m2/settings.xml"                   -DskipTests                   dependency:tree
+                mvn -B -U -s "$(HOME)/.m2/settings.xml" \
+                  -DskipTests \
+                  dependency:tree
               else
-                mvn -B -U                   -DskipTests                   dependency:tree
+                mvn -B -U \
+                  -DskipTests \
+                  dependency:tree
               fi
             displayName: "Validar dependencias Maven"
 
-          # Checkmarx One: SAST + SCA.
-          # El plugin de Azure DevOps puede descargar/usar SCA Resolver
-          # automáticamente cuando no se proporciona una ruta explícita.
-          # Esto evita depender de una ruta fija del agente.
+# ─────────────────────────────────────────────────────────────
+# STAGE 2 — Checkmarx: detección de NUEVAS vulnerabilidades
+# ─────────────────────────────────────────────────────────────
+  - stage: ScanNew
+    displayName: "Checkmarx — Vulnerabilidades NUEVAS"
+    dependsOn: Prepare
+    condition: succeeded()
+    jobs:
+      - job: CheckmarxScanNew
+        displayName: "SAST + SCA · Estado: NEW"
+        steps:
+
+          - checkout: self
+            fetchDepth: 0
+            persistCredentials: true
+
           - task: Checkmarx AST@3
-            displayName: "Checkmarx One - SAST + SCA"
+            displayName: "Checkmarx One — Nuevas (SAST + SCA)"
             inputs:
               CheckmarxService: "$(checkmarxServiceConnection)"
               projectName: "$(Build.Repository.Name)"
@@ -83,25 +102,106 @@ stages:
               tenantName: "$(checkmarxTenant)"
               additionalParams: >-
                 --scan-types sast,sca
+                --threshold "sast-critical=$(thresholdCritical);sast-high=$(thresholdHigh);sast-medium=$(thresholdMedium)"
+                --filter "state=NEW"
             continueOnError: false
 
-          # Build/pruebas del proyecto MuleSoft.
+          - bash: |
+              echo "=============================================="
+              echo " STAGE: Vulnerabilidades NUEVAS"
+              echo " Proyecto : $(Build.Repository.Name)"
+              echo " Branch   : $(Build.SourceBranchName)"
+              echo " Umbrales — Críticas: $(thresholdCritical) | Altas: $(thresholdHigh) | Medias: $(thresholdMedium)"
+              echo "=============================================="
+            displayName: "Resumen — Nuevas"
+
+# ─────────────────────────────────────────────────────────────
+# STAGE 3 — Checkmarx: detección de RECURRENTES
+# ─────────────────────────────────────────────────────────────
+  - stage: ScanRecurrent
+    displayName: "Checkmarx — Vulnerabilidades RECURRENTES"
+    dependsOn: ScanNew
+    condition: succeeded()
+    jobs:
+      - job: CheckmarxScanRecurrent
+        displayName: "SAST + SCA · Estado: RECURRENT"
+        steps:
+
+          - checkout: self
+            fetchDepth: 0
+            persistCredentials: true
+
+          - task: Checkmarx AST@3
+            displayName: "Checkmarx One — Recurrentes (SAST + SCA)"
+            inputs:
+              CheckmarxService: "$(checkmarxServiceConnection)"
+              projectName: "$(Build.Repository.Name)"
+              branchName: "$(Build.SourceBranchName)"
+              tenantName: "$(checkmarxTenant)"
+              additionalParams: >-
+                --scan-types sast,sca
+                --threshold "sast-critical=$(thresholdCritical);sast-high=$(thresholdHigh);sast-medium=$(thresholdMedium)"
+                --filter "state=RECURRENT"
+            continueOnError: false
+
+          - bash: |
+              echo "=============================================="
+              echo " STAGE: Vulnerabilidades RECURRENTES"
+              echo " Proyecto : $(Build.Repository.Name)"
+              echo " Branch   : $(Build.SourceBranchName)"
+              echo " Umbrales — Críticas: $(thresholdCritical) | Altas: $(thresholdHigh) | Medias: $(thresholdMedium)"
+              echo "=============================================="
+            displayName: "Resumen — Recurrentes"
+
+# ─────────────────────────────────────────────────────────────
+# STAGE 4 — Build y pruebas MuleSoft
+# ─────────────────────────────────────────────────────────────
+  - stage: Build
+    displayName: "MuleSoft — Build y pruebas"
+    dependsOn: ScanRecurrent
+    condition: succeeded()
+    jobs:
+      - job: MuleBuild
+        displayName: "Maven build"
+        steps:
+
+          - checkout: self
+            fetchDepth: 0
+            persistCredentials: true
+
+          - task: Cache@2
+            condition: eq(variables['enableMavenCache'], 'true')
+            displayName: "Cache Maven (.m2)"
+            inputs:
+              key: 'maven | "$(Agent.OS)" | "$(Build.SourceBranchName)"'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+              path: "$(HOME)/.m2/repository"
+
           - bash: |
               set -euo pipefail
+              mkdir -p "$(HOME)/.m2"
+              if [ -f "$(mavenSettingsFile)" ]; then
+                cp "$(mavenSettingsFile)" "$(HOME)/.m2/settings.xml"
+                chmod 600 "$(HOME)/.m2/settings.xml"
+              fi
+            displayName: "Restaurar settings.xml"
 
+          - bash: |
+              set -euo pipefail
               if [ -f "$(HOME)/.m2/settings.xml" ]; then
                 mvn -B -U -s "$(HOME)/.m2/settings.xml" $(mavenGoals)
               else
                 mvn -B -U $(mavenGoals)
               fi
-            displayName: "Maven - Build y pruebas"
+            displayName: "Maven — Build y pruebas"
 
           - bash: |
               echo "=============================================="
-              echo "POC MuleSoft + Maven + Checkmarx completada"
-              echo "Proyecto : $(Build.Repository.Name)"
-              echo "Branch   : $(Build.SourceBranchName)"
-              echo "Tenant   : $(checkmarxTenant)"
-              echo "Scanners : SAST + SCA"
+              echo " POC MuleSoft + Checkmarx completada"
+              echo " Proyecto : $(Build.Repository.Name)"
+              echo " Branch   : $(Build.SourceBranchName)"
+              echo " Tenant   : $(checkmarxTenant)"
+              echo " Scanners : SAST + SCA (NEW + RECURRENT)"
               echo "=============================================="
-            displayName: "Resumen de la POC"
+            displayName: "Resumen final de la POC"
