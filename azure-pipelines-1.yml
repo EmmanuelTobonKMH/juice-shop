@@ -64,14 +64,32 @@ stages:
               fi
             displayName: "Preparar configuración Maven"
 
+          # FIX: se agrega -f apuntando a Build.SourcesDirectory
+          # para que Maven encuentre el pom.xml sin importar el directorio
+          # de trabajo actual del agente.
           - bash: |
               set -euo pipefail
+
+              POM_FILE="$(Build.SourcesDirectory)/pom.xml"
+
+              if [ ! -f "$POM_FILE" ]; then
+                echo "[ERROR] No se encontró pom.xml en $(Build.SourcesDirectory)"
+                echo "Contenido del directorio:"
+                ls -la "$(Build.SourcesDirectory)"
+                exit 1
+              fi
+
+              echo "pom.xml encontrado en: $POM_FILE"
+
               if [ -f "$(HOME)/.m2/settings.xml" ]; then
-                mvn -B -U -s "$(HOME)/.m2/settings.xml" \
+                mvn -B -U \
+                  -s "$(HOME)/.m2/settings.xml" \
+                  -f "$POM_FILE" \
                   -DskipTests \
                   dependency:tree
               else
                 mvn -B -U \
+                  -f "$POM_FILE" \
                   -DskipTests \
                   dependency:tree
               fi
@@ -184,15 +202,33 @@ stages:
               if [ -f "$(mavenSettingsFile)" ]; then
                 cp "$(mavenSettingsFile)" "$(HOME)/.m2/settings.xml"
                 chmod 600 "$(HOME)/.m2/settings.xml"
+                echo "settings.xml restaurado en ~/.m2"
+              else
+                echo "No se encontró settings.xml; se usará configuración Maven por defecto."
               fi
             displayName: "Restaurar settings.xml"
 
+          # FIX: mismo -f que en Stage 1 para garantizar consistencia
           - bash: |
               set -euo pipefail
+
+              POM_FILE="$(Build.SourcesDirectory)/pom.xml"
+
+              if [ ! -f "$POM_FILE" ]; then
+                echo "[ERROR] No se encontró pom.xml en $(Build.SourcesDirectory)"
+                ls -la "$(Build.SourcesDirectory)"
+                exit 1
+              fi
+
               if [ -f "$(HOME)/.m2/settings.xml" ]; then
-                mvn -B -U -s "$(HOME)/.m2/settings.xml" $(mavenGoals)
+                mvn -B -U \
+                  -s "$(HOME)/.m2/settings.xml" \
+                  -f "$POM_FILE" \
+                  $(mavenGoals)
               else
-                mvn -B -U $(mavenGoals)
+                mvn -B -U \
+                  -f "$POM_FILE" \
+                  $(mavenGoals)
               fi
             displayName: "Maven — Build y pruebas"
 
