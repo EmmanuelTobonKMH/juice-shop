@@ -11,9 +11,6 @@ pool:
 variables:
   checkmarxServiceConnection: "juiceshop-connection"
   checkmarxTenant: "nfr_lugapel-ast"
-  mavenSettingsFile: "$(Build.SourcesDirectory)/settings.xml"
-  mavenGoals: "test"
-  enableMavenCache: "true"
 
   # Umbrales de calidad — compartidos por ambas fases
   thresholdCritical: "0"
@@ -21,14 +18,14 @@ variables:
   thresholdMedium: "10"
 
 # ─────────────────────────────────────────────────────────────
-# STAGE 1 — Preparación: Java, Maven, caché y settings.xml
+# STAGE 1 — Preparación: checkout y validación del entorno
 # ─────────────────────────────────────────────────────────────
 stages:
   - stage: Prepare
     displayName: "Preparación del entorno"
     jobs:
       - job: SetupAndValidate
-        displayName: "Java · Maven · Caché · Dependencias"
+        displayName: "Checkout + Validación"
         steps:
 
           - checkout: self
@@ -37,63 +34,14 @@ stages:
 
           - bash: |
               set -euo pipefail
-              echo "===== Java ====="
-              java -version
-              echo "===== Maven ====="
-              mvn -version
-            displayName: "Validar Java y Maven"
-
-          - task: Cache@2
-            condition: eq(variables['enableMavenCache'], 'true')
-            displayName: "Cache Maven (.m2)"
-            inputs:
-              key: 'maven | "$(Agent.OS)" | "$(Build.SourceBranchName)"'
-              restoreKeys: |
-                maven | "$(Agent.OS)"
-              path: "$(HOME)/.m2/repository"
-
-          - bash: |
-              set -euo pipefail
-              mkdir -p "$(HOME)/.m2"
-              if [ -f "$(mavenSettingsFile)" ]; then
-                cp "$(mavenSettingsFile)" "$(HOME)/.m2/settings.xml"
-                chmod 600 "$(HOME)/.m2/settings.xml"
-                echo "settings.xml configurado en ~/.m2"
-              else
-                echo "No se encontró settings.xml; se usará configuración Maven por defecto."
-              fi
-            displayName: "Preparar configuración Maven"
-
-          # FIX: se agrega -f apuntando a Build.SourcesDirectory
-          # para que Maven encuentre el pom.xml sin importar el directorio
-          # de trabajo actual del agente.
-          - bash: |
-              set -euo pipefail
-
-              POM_FILE="$(Build.SourcesDirectory)/pom.xml"
-
-              if [ ! -f "$POM_FILE" ]; then
-                echo "[ERROR] No se encontró pom.xml en $(Build.SourcesDirectory)"
-                echo "Contenido del directorio:"
-                ls -la "$(Build.SourcesDirectory)"
-                exit 1
-              fi
-
-              echo "pom.xml encontrado en: $POM_FILE"
-
-              if [ -f "$(HOME)/.m2/settings.xml" ]; then
-                mvn -B -U \
-                  -s "$(HOME)/.m2/settings.xml" \
-                  -f "$POM_FILE" \
-                  -DskipTests \
-                  dependency:tree
-              else
-                mvn -B -U \
-                  -f "$POM_FILE" \
-                  -DskipTests \
-                  dependency:tree
-              fi
-            displayName: "Validar dependencias Maven"
+              echo "===== Repositorio ====="
+              echo "Proyecto : $(Build.Repository.Name)"
+              echo "Branch   : $(Build.SourceBranchName)"
+              echo "Directorio: $(Build.SourcesDirectory)"
+              echo ""
+              echo "===== Contenido raíz ====="
+              ls -la "$(Build.SourcesDirectory)"
+            displayName: "Validar checkout y estructura del repositorio"
 
 # ─────────────────────────────────────────────────────────────
 # STAGE 2 — Checkmarx: detección de NUEVAS vulnerabilidades
@@ -172,72 +120,24 @@ stages:
             displayName: "Resumen — Recurrentes"
 
 # ─────────────────────────────────────────────────────────────
-# STAGE 4 — Build y pruebas MuleSoft
+# STAGE 4 — Resumen final de la POC
 # ─────────────────────────────────────────────────────────────
-  - stage: Build
-    displayName: "MuleSoft — Build y pruebas"
+  - stage: Summary
+    displayName: "Resumen de la POC"
     dependsOn: ScanRecurrent
     condition: succeeded()
     jobs:
-      - job: MuleBuild
-        displayName: "Maven build"
+      - job: POCSummary
+        displayName: "Resumen final"
         steps:
-
-          - checkout: self
-            fetchDepth: 0
-            persistCredentials: true
-
-          - task: Cache@2
-            condition: eq(variables['enableMavenCache'], 'true')
-            displayName: "Cache Maven (.m2)"
-            inputs:
-              key: 'maven | "$(Agent.OS)" | "$(Build.SourceBranchName)"'
-              restoreKeys: |
-                maven | "$(Agent.OS)"
-              path: "$(HOME)/.m2/repository"
-
-          - bash: |
-              set -euo pipefail
-              mkdir -p "$(HOME)/.m2"
-              if [ -f "$(mavenSettingsFile)" ]; then
-                cp "$(mavenSettingsFile)" "$(HOME)/.m2/settings.xml"
-                chmod 600 "$(HOME)/.m2/settings.xml"
-                echo "settings.xml restaurado en ~/.m2"
-              else
-                echo "No se encontró settings.xml; se usará configuración Maven por defecto."
-              fi
-            displayName: "Restaurar settings.xml"
-
-          # FIX: mismo -f que en Stage 1 para garantizar consistencia
-          - bash: |
-              set -euo pipefail
-
-              POM_FILE="$(Build.SourcesDirectory)/pom.xml"
-
-              if [ ! -f "$POM_FILE" ]; then
-                echo "[ERROR] No se encontró pom.xml en $(Build.SourcesDirectory)"
-                ls -la "$(Build.SourcesDirectory)"
-                exit 1
-              fi
-
-              if [ -f "$(HOME)/.m2/settings.xml" ]; then
-                mvn -B -U \
-                  -s "$(HOME)/.m2/settings.xml" \
-                  -f "$POM_FILE" \
-                  $(mavenGoals)
-              else
-                mvn -B -U \
-                  -f "$POM_FILE" \
-                  $(mavenGoals)
-              fi
-            displayName: "Maven — Build y pruebas"
-
           - bash: |
               echo "=============================================="
-              echo " POC MuleSoft + Checkmarx completada"
+              echo " POC Checkmarx One completada exitosamente"
               echo " Proyecto : $(Build.Repository.Name)"
               echo " Branch   : $(Build.SourceBranchName)"
               echo " Tenant   : $(checkmarxTenant)"
-              echo " Scanners : SAST + SCA (NEW + RECURRENT)"
+              echo " Scanners : SAST + SCA"
+              echo " Fases    : NEW + RECURRENT"
+              echo " Umbrales — Críticas: $(thresholdCritical) | Altas: $(thresholdHigh) | Medias: $(thresholdMedium)"
               echo "=============================================="
             displayName: "Resumen final de la POC"
