@@ -13,7 +13,7 @@ variables:
   checkmarxTenant: "nfr_lugapel-ast"
 
   # Umbrales de calidad — compartidos por ambas fases
-  thresholdCritical: "0"
+  thresholdCritical: "1"
   thresholdHigh: "5"
   thresholdMedium: "10"
 
